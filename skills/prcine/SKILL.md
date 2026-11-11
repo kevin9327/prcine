@@ -35,4 +35,6 @@ Useful flags: `-d 15` (10-60 s), `-a 9:16` (vertical for social), `-a 1:1`, `--h
 
 - Lockfiles, generated files, snapshots and binaries are never chosen as highlights; tests and docs are ranked lower than source.
 - For private repos, make sure `gh auth status` works or set `GITHUB_TOKEN`.
+- To get a video comment on every PR, add a workflow with `uses: kevin9327/prcine@main` (see `examples/github-action/prcine.yml`). It updates one marked comment in place.
+- With little worth showing, the video gets shorter than `-d` rather than padding.
 - Do not claim the video shows the full diff: it shows the highlights, the file list and the totals.

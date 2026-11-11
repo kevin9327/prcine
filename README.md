@@ -77,20 +77,36 @@ Output: `prcine.mp4` (1080p H.264, ~4 MB) and `prcine.webp` (looping, kept under
 
 1. **Title card.** Repo, PR number, author avatar, merged/open state, commit and file counts, and a counter that rolls up `+additions −deletions`.
 2. **Files.** Every changed file with a diffstat bar. The files about to be shown light up.
-3. **Highlights.** prcine scores every hunk and picks the densest windows from the files that matter. Lockfiles, `dist/`, snapshots, generated code and binaries are never picked; tests, docs and config rank below source. Deleted lines get struck through, added lines are typed in with syntax highlighting (Shiki grammars for 60+ file types), and the camera pushes in on the line being written.
+3. **Highlights.** prcine scores every changed line and picks the best windows from the files that matter. Real code counts fully; comments, string-heavy lines and help text count for about a third. Core source (`src/`, `lib/`, `crates/*/src`, `packages/*/src`) is preferred; tests, examples, docs and config only make the cut when they are close to the best hunk, and lockfiles, `dist/`, snapshots, generated code and binaries never do. A small PR gets fewer, better highlights and a shorter video instead of filler. Deleted lines get struck through, added lines are typed in with syntax highlighting (Shiki grammars for 60+ file types), and the card pushes in gently while it types. Code is sized to the frame: long lines soft-wrap with a hanging indent instead of being cut off, and 9:16 keeps the text large enough to read on a phone.
 4. **Outro.** Totals and the PR link. The last frames fade to the first, so the WebP loops cleanly.
 
 Everything is drawn with Skia ([@napi-rs/canvas](https://github.com/Brooooooklyn/canvas)): no headless browser, no screen recording, and the same input always gives the same frames.
 
 ## Examples
 
-| `vitejs/vite#24044`, 16:9 | `oven-sh/bun#47555`, 9:16 |
+| `astral-sh/uv#23209`, 16:9 | `oven-sh/bun#47555`, 9:16 |
 |---|---|
-| <img src="docs/vite-24044.webp" width="560" alt="vite PR walkthrough"> | <img src="docs/bun-47555-vertical.webp" width="250" alt="bun PR walkthrough, vertical"> |
+| <img src="docs/uv-23209.webp" width="560" alt="uv PR walkthrough"> | <img src="docs/bun-47555-vertical.webp" width="250" alt="bun PR walkthrough, vertical"> |
 
 ## On every pull request (GitHub Action)
 
-[`examples/github-action/prcine.yml`](examples/github-action/prcine.yml) renders each PR, uploads the MP4 and WebP as artifacts, pushes the WebP to a `prcine-media` branch and comments it on the PR, so reviewers see the walkthrough inline. Copy it to `.github/workflows/prcine.yml`. It skips PRs from forks, whose token can't push.
+```yaml
+# .github/workflows/prcine.yml
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: write        # push the WebP to a prcine-media branch
+  pull-requests: write   # comment on the PR
+jobs:
+  video:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: kevin9327/prcine@main
+```
+
+The action renders the PR, pushes the WebP to a `prcine-media` branch, and posts **one** comment that it finds again by a hidden marker and updates in place on every push, so it never touches anyone else's comments. Inputs: `duration`, `aspect`, `comment` (`true`/`false`), `media-branch`; outputs: `mp4`, `webp`. The full example with artifact upload is in [`examples/github-action/prcine.yml`](examples/github-action/prcine.yml), and this repo runs it on its own PRs. The embedded image loads from `raw.githubusercontent.com`, so inline comments work on public repos; on private repos use the MP4 from the artifacts. PRs from forks are skipped because their token can't push.
 
 ## For coding agents
 
@@ -122,7 +138,7 @@ Code map: `src/source.ts` (GitHub API / git), `src/diff.ts` (unified diff parser
 
 ## Credits
 
-Typeset in [Geist and Geist Mono](https://vercel.com/font) (SIL OFL 1.1, bundled in `assets/fonts`). Syntax colors from Shiki's `vitesse-dark` theme. The example videos show public pull requests from [facebook/react](https://github.com/facebook/react), [vitejs/vite](https://github.com/vitejs/vite) and [oven-sh/bun](https://github.com/oven-sh/bun); the code belongs to their authors.
+Typeset in [Geist and Geist Mono](https://vercel.com/font) (SIL OFL 1.1, bundled in `assets/fonts`). Syntax colors from Shiki's `vitesse-dark` theme. The example videos show public pull requests from [facebook/react](https://github.com/facebook/react), [astral-sh/uv](https://github.com/astral-sh/uv) and [oven-sh/bun](https://github.com/oven-sh/bun); the code belongs to their authors.
 
 ## License
 
