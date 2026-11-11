@@ -95,7 +95,12 @@ export async function plan(cs: ChangeSet, opts: RenderOptions): Promise<Plan> {
   const push = (s: Omit<Scene, "start">) => { scenes.push({ ...s, start: t }); t += s.dur - XFADE; };
   push({ kind: "title", dur: tTitle });
   push({ kind: "files", dur: tFiles });
-  hunks.forEach((_, i) => push({ kind: "code", dur: codeDur, hunk: i }));
+  // a hunk only gets as long as its change needs: tiny edits don't sit on screen for 6 seconds
+  hunks.forEach((h, i) => {
+    const changedLines = h.adds + h.dels;
+    const ideal = Math.max(3.4, Math.min(6.5, 2.6 + 0.2 * changedLines + h.chars / 90));
+    push({ kind: "code", dur: Math.min(codeDur, ideal), hunk: i });
+  });
   // the outro absorbs rounding; when there is little worth showing, the video gets shorter instead of padding
   const outroDur = Math.max(2, Math.min(4.4, D - t));
   scenes.push({ kind: "outro", start: t, dur: outroDur });
