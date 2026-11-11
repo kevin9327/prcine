@@ -1,0 +1,51 @@
+{
+  "name": "prcine",
+  "version": "0.1.0",
+  "description": "Turn any GitHub PR or git range into a polished code-walkthrough video (MP4 + animated WebP) for your README, X post or PR comment.",
+  "scripts": {
+    "build": "tsc",
+    "prepare": "tsc",
+    "test": "npm run build && node --test test/"
+  },
+  "keywords": [
+    "git",
+    "github",
+    "pull-request",
+    "diff",
+    "video",
+    "code",
+    "readme",
+    "demo",
+    "cli",
+    "changelog"
+  ],
+  "author": "kevin9327",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@napi-rs/canvas": "^1.1.0",
+    "shiki": "^4.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "typescript": "^7.0.2"
+  },
+  "bin": {
+    "prcine": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "assets",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kevin9327/prcine.git"
+  },
+  "homepage": "https://github.com/kevin9327/prcine#readme"
+}

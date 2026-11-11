@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.tgz
+/out/
+*.png
+!docs/*.png
+PROGRESS.md
