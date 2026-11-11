@@ -5,7 +5,7 @@
   "scripts": {
     "build": "tsc",
     "prepare": "tsc",
-    "test": "npm run build && node --test test/"
+    "test": "npm run build && node --test test/core.test.mjs"
   },
   "keywords": [
     "git",
