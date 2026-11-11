@@ -1,0 +1,32 @@
+# This repo runs prcine on its own pull requests.
+# Renders a walkthrough video for every pull request and posts it as one comment,
+# which is updated in place on every push.
+name: prcine
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write        # push the rendered WebP to the prcine-media branch
+  pull-requests: write   # comment on the PR
+
+concurrency:
+  group: prcine-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  video:
+    # forks get a read-only token, so only run for branches in this repo
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: kevin9327/prcine@main
+        # with:
+        #   duration: 22        # 10-60 seconds
+        #   aspect: "16:9"      # or 9:16, 1:1
+        #   comment: true       # false = only render
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prcine-pr-${{ github.event.pull_request.number }}
+          path: prcine-out/

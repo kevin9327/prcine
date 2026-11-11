@@ -1,0 +1,68 @@
+name: prcine
+description: Render a code-walkthrough video of the pull request and post it as a PR comment.
+author: kevin9327
+branding:
+  icon: film
+  color: purple
+inputs:
+  github-token:
+    description: Token used to read the PR, push the WebP and comment.
+    default: ${{ github.token }}
+  duration:
+    description: Video length in seconds (10-60).
+    default: "22"
+  aspect:
+    description: 16:9, 9:16 or 1:1.
+    default: "16:9"
+  comment:
+    description: Post (or update) a PR comment with the animated WebP.
+    default: "true"
+  media-branch:
+    description: Branch that stores the WebP files the comment embeds.
+    default: prcine-media
+outputs:
+  mp4:
+    description: Path to the MP4.
+    value: ${{ steps.render.outputs.mp4 }}
+  webp:
+    description: Path to the animated WebP.
+    value: ${{ steps.render.outputs.webp }}
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 20
+    - name: Install ffmpeg
+      shell: bash
+      run: command -v ffmpeg >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
+    - name: Build prcine
+      shell: bash
+      run: cd "$GITHUB_ACTION_PATH" && npm ci --no-audit --no-fund --loglevel=error
+    - name: Render
+      id: render
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR_URL: ${{ github.event.pull_request.html_url }}
+        PR: ${{ github.event.pull_request.number }}
+        SHA: ${{ github.event.pull_request.head.sha }}
+        DURATION: ${{ inputs.duration }}
+        ASPECT: ${{ inputs.aspect }}
+      run: |
+        if [ -z "$PR_URL" ]; then echo "prcine: this action runs on pull_request events" >&2; exit 1; fi
+        out="prcine-out/pr-${PR}-${SHA::7}"
+        node "$GITHUB_ACTION_PATH/dist/cli.js" "$PR_URL" -o "$out" -d "$DURATION" -a "$ASPECT"
+        echo "mp4=$out.mp4" >> "$GITHUB_OUTPUT"
+        echo "webp=$out.webp" >> "$GITHUB_OUTPUT"
+    - name: Comment
+      if: inputs.comment == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        PR: ${{ github.event.pull_request.number }}
+        WEBP: ${{ steps.render.outputs.webp }}
+        BRANCH: ${{ inputs.media-branch }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/comment.sh"

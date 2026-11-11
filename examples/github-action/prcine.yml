@@ -1,5 +1,6 @@
 # Copy to .github/workflows/prcine.yml
-# Renders a walkthrough video for every pull request and posts it as a comment.
+# Renders a walkthrough video for every pull request and posts it as one comment,
+# which is updated in place on every push.
 name: prcine
 
 on:
@@ -20,41 +21,12 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install ffmpeg
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
-
-      - name: Render
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: npx -y github:kevin9327/prcine "$PR_URL" -o "out/pr-$PR_NUMBER" --duration 20
-
+      - uses: kevin9327/prcine@main
+        # with:
+        #   duration: 22        # 10-60 seconds
+        #   aspect: "16:9"      # or 9:16, 1:1
+        #   comment: true       # false = only render
       - uses: actions/upload-artifact@v4
         with:
           name: prcine-pr-${{ github.event.pull_request.number }}
-          path: out/
-
-      - name: Publish the WebP and comment
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          file="pr-$PR_NUMBER-${SHA::7}.webp"
-          git init -q media && cd media
-          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
-          if git fetch -q --depth 1 origin prcine-media; then git checkout -q prcine-media; else git checkout -q --orphan prcine-media; fi
-          cp "../out/pr-$PR_NUMBER.webp" "$file"
-          git add "$file"
-          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -qm "prcine: PR #$PR_NUMBER @ ${SHA::7}"
-          git push -q origin prcine-media
-          url="https://github.com/${REPO}/raw/prcine-media/${file}"
-          body=$(printf '### 🎬 prcine walkthrough\n\n![PR walkthrough](%s)\n\n<sub>MP4 in the workflow artifacts · made with [prcine](https://github.com/kevin9327/prcine)</sub>' "$url")
-          gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$body" --edit-last 2>/dev/null || gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$body"
+          path: prcine-out/
