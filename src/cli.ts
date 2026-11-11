@@ -78,7 +78,7 @@ async function main() {
   if (values.title) cs.title = values.title;
   if (!cs.files.length) throw new Error("no changes found");
   const p = await plan(cs, { width, height, fps, duration, maxHunks: values.hunks ? Number(values.hunks) : undefined, avatar: !values["no-avatar"], brand: !values["no-brand"] });
-  log(`${cs.files.length} files, +${cs.additions} −${cs.deletions}; ${p.hunks.length} highlight(s): ${p.hunks.map((h) => h.file.path).join(", ")}`);
+  log(`${cs.files.length} files, +${cs.additions} −${cs.deletions}; ${p.opts.duration.toFixed(1)}s; ${p.hunks.length} highlight(s): ${p.hunks.map((h) => h.file.path).join(", ")}`);
 
   const out = resolve(String(values.out).replace(/\.(mp4|webp)$/i, ""));
   if (!existsSync(dirname(out))) mkdirSync(dirname(out), { recursive: true });

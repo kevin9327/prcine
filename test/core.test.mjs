@@ -130,3 +130,38 @@ test("animated WebP muxer writes a valid RIFF with one ANMF per changed frame", 
   assert.equal(buf.toString("latin1", 12, 16), "VP8X");
   assert.ok(buf.includes(Buffer.from("ANMF")));
 });
+
+test("wrapLine soft-wraps long lines with a hanging indent and loses no characters", async () => {
+  const { wrapLine } = await import("../dist/render.js");
+  const text = "    const result = await someVeryLongFunctionName(firstArgument, secondArgument, thirdArgument);";
+  const segs = wrapLine(text, 40);
+  assert.ok(segs.length > 1);
+  assert.equal(segs[0].indent, 0);
+  assert.ok(segs.slice(1).every((s) => s.indent === 6));
+  for (const s of segs) assert.ok(s.e - s.s + s.indent <= 40);
+  const joined = segs.map((s) => text.slice(s.s, s.e)).join("").replace(/\s+/g, "");
+  assert.equal(joined, text.replace(/\s+/g, ""));
+  assert.equal(wrapLine("short", 40).length, 1);
+});
+
+test("lineValue prefers code over comments, strings and help text", async () => {
+  const { lineValue } = await import("../dist/pick.js");
+  const code = lineValue("  const total = items.reduce((a, b) => a + b, 0);");
+  assert.equal(code, 1);
+  assert.ok(lineValue("  // explain what happens next in plain words") < 0.5);
+  assert.ok(lineValue('  "Output path without extension (default: prcine)",') < 0.5);
+  assert.ok(lineValue("      --size <px>         Short side in pixels") < 0.5);
+  assert.equal(lineValue("#[cfg(unix)]"), 1);
+});
+
+test("pickHighlights prefers core source over tests and help strings", async () => {
+  const mk = (path, lines) => ({ path, status: "modified", additions: lines.length, deletions: 0, binary: false,
+    hunks: [{ oldStart: 1, newStart: 1, header: "", lines: lines.map((text, i) => ({ kind: "add", text, newNo: i + 1 })) }] });
+  const test = mk("src/__tests__/app.test.ts", Array.from({ length: 12 }, (_, i) => `expect(add(${i}, 1)).toBe(${i + 1});`));
+  const help = mk("src/cli.ts", Array.from({ length: 12 }, (_, i) => `  --flag-${i}         Does a thing with the option number ${i}`));
+  const core = mk("src/core/add.ts", ["export function add(a: number, b: number) {", "  if (!Number.isFinite(a)) throw new TypeError('a');", "  return a + b;", "}"]);
+  const cs = { repo: "x/y", title: "t", commits: 1, additions: 28, deletions: 0, files: [test, help, core] };
+  assert.equal(pickHighlights(cs, 1, 13)[0].file.path, "src/core/add.ts");
+  const picked = pickHighlights(cs, 3, 13);
+  assert.ok(!picked.some((h) => h.file === test), "test file should not be filler");
+});
