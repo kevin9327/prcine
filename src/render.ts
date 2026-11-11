@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { langFor, tokenize, type Tok } from "./highlight.js";
 import { fileWeight, pickHighlights } from "./pick.js";
-import { C, LANG_COLOR, MONO, SANS, clamp01, ease, fmt, hexA, lerp, prog } from "./style.js";
+import { C, LANG_COLOR, MONO, SANS, clamp01, ease, fmt, hexA, lerp, plural, prog } from "./style.js";
 import type { ChangeSet, FileDiff, LineKind } from "./types.js";
 
 type Ctx = SKRSContext2D;
@@ -359,7 +359,7 @@ function drawFiles(p: Plan, g: Ctx, s: Scene, t: number) {
   const more = files.length - rows.length;
   // heading
   font(g, 600, 54 * S); g.textBaseline = "alphabetic"; g.fillStyle = C.text;
-  g.fillText(`${fmt(cs.files.length)} file${cs.files.length === 1 ? "" : "s"} changed`, M, top + 54 * S);
+  g.fillText(`${plural(cs.files.length, "file")} changed`, M, top + 54 * S);
   font(g, 500, 24 * S, MONO); g.fillStyle = C.dim;
   const hint = p.hunks.length ? `${p.hunks.length} highlight${p.hunks.length === 1 ? "" : "s"} ahead` : "";
   if (!p.portrait) { g.textAlign = "right"; g.fillText(hint, W - M, top + 50 * S); g.textAlign = "left"; }
