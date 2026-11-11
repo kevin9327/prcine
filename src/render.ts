@@ -54,6 +54,7 @@ function dedent(lines: string[]): string[] {
 }
 
 export async function plan(cs: ChangeSet, opts: RenderOptions): Promise<Plan> {
+  opts = { ...opts };
   registerFonts();
   const portrait = opts.height >= opts.width; // square uses the stacked (vertical) layout
   const S = Math.min(opts.width, opts.height) / 1080;
@@ -88,15 +89,17 @@ export async function plan(cs: ChangeSet, opts: RenderOptions): Promise<Plan> {
     tTitle *= f; tFiles *= f; tOutro *= f;
     codeDur = (D - (tTitle + tFiles + tOutro) + transitions * XFADE) / n;
   }
-  codeDur = Math.min(codeDur, 7);
+  codeDur = Math.min(codeDur, 6.5);
   const scenes: Scene[] = [];
   let t = 0;
   const push = (s: Omit<Scene, "start">) => { scenes.push({ ...s, start: t }); t += s.dur - XFADE; };
   push({ kind: "title", dur: tTitle });
   push({ kind: "files", dur: tFiles });
   hunks.forEach((_, i) => push({ kind: "code", dur: codeDur, hunk: i }));
-  // outro absorbs any rounding so the video is exactly D long
-  scenes.push({ kind: "outro", start: t, dur: Math.max(2, D - t) });
+  // the outro absorbs rounding; when there is little worth showing, the video gets shorter instead of padding
+  const outroDur = Math.max(2, Math.min(4.4, D - t));
+  scenes.push({ kind: "outro", start: t, dur: outroDur });
+  opts = { ...opts, duration: Math.min(D, t + outroDur) };
 
   let avatar: Image | undefined;
   if (opts.avatar !== false && cs.author && cs.state !== "range") {
@@ -261,8 +264,11 @@ function drawTitle(p: Plan, g: Ctx, s: Scene, t: number) {
   g.fillStyle = C.sub; g.fillText(cs.repo, x, ry + (1 - a0) * 10 * S);
   if (cs.number) { const w = g.measureText(cs.repo).width; g.fillStyle = C.accent; g.fillText(`  #${cs.number}`, x + w, ry + (1 - a0) * 10 * S); }
   y += 70 * S;
-  // words
+  // words, with a white-to-periwinkle gradient across the headline
   font(g, 600, size); g.textBaseline = "alphabetic";
+  const titleW = Math.max(...lines.map((l) => g.measureText(l.join(" ")).width));
+  const titleFill = g.createLinearGradient(M, 0, M + Math.max(titleW, 1), 0);
+  titleFill.addColorStop(0, "#FFFFFF"); titleFill.addColorStop(0.55, "#EEF0FF"); titleFill.addColorStop(1, "#AFBDFF");
   let wi = 0;
   for (const line of lines) {
     let lx = M;
@@ -271,7 +277,7 @@ function drawTitle(p: Plan, g: Ctx, s: Scene, t: number) {
       const d = 0.22 + wi * 0.045;
       const e = ease.out5(prog(u, d, 0.7));
       g.globalAlpha = (1 - out) * e;
-      g.fillStyle = C.text;
+      g.fillStyle = titleFill;
       g.fillText(w, lx, y + (1 - e) * 36 * S);
       lx += g.measureText(w + " ").width;
       wi++;
@@ -436,6 +442,90 @@ function codeSchedule(h: PHunk, dur: number) {
   return { anim, typingEnd: t, spotAt: Math.min(dur - 0.9, t + 0.1) };
 }
 
+interface Seg { s: number; e: number; indent: number }
+interface CodeLayout {
+  fs: number; lh: number; chW: number; noDigits: number; gutterW: number;
+  cw: number; chhFinal: number; cx0: number; cy0: number; z: number;
+  lines: number; // number of hunk lines that fit (rest is cut)
+  segs: Seg[][];
+}
+
+/** Soft-wrap one line to `cols` characters, breaking after spaces or punctuation, with a hanging indent. */
+export function wrapLine(text: string, cols: number): Seg[] {
+  const len = text.trimEnd().length;
+  if (len <= cols) return [{ s: 0, e: text.length, indent: 0 }];
+  const lead = Math.min(text.length - text.trimStart().length, Math.floor(cols / 3));
+  const indent = lead + 2;
+  const out: Seg[] = [];
+  let s = 0, first = true;
+  while (s < len) {
+    const room = first ? cols : cols - indent;
+    if (len - s <= room) { out.push({ s, e: len, indent: first ? 0 : indent }); break; }
+    let cut = s + room;
+    for (let k = cut; k > s + room * 0.55; k--) {
+      const ch = text[k - 1];
+      if (ch === " " || ch === "," || ch === ";" || ch === "(" || ch === "{" || ch === "[" || ch === "." || ch === ":" || ch === "|" || ch === "&") { cut = k; break; }
+    }
+    out.push({ s, e: cut, indent: first ? 0 : indent });
+    s = cut;
+    while (s < len && text[s] === " ") s++; // continuation rows start on a non-space
+    first = false;
+  }
+  return out;
+}
+
+const layouts = new WeakMap<object, CodeLayout>();
+
+function layoutCode(p: Plan, g: Ctx, h: PHunk, top: number, maxCw: number, maxCh: number, padX: number, padY: number): CodeLayout {
+  const key = h as object;
+  const hit = layouts.get(key);
+  if (hit) return hit;
+  const { width: W, height: H } = p.opts; const S = p.S; const P = p.portrait;
+  const maxNo = Math.max(...h.lines.map((l) => l.no ?? 0));
+  const noDigits = Math.max(2, String(maxNo).length);
+  const fsMax = (P ? 40 : 38) * S, fsMin = (P ? 27 : 21) * S;
+  let best: Omit<CodeLayout, "cw" | "chhFinal" | "cx0" | "cy0" | "z"> | null = null;
+  for (let fs = fsMax; fs >= fsMin - 0.01; fs -= 1 * S) {
+    font(g, 400, fs, MONO);
+    const chW = g.measureText("0").width;
+    const lh = fs * 1.55;
+    const gutterW = (noDigits + 1.4) * chW + 20 * S;
+    const cols = Math.max(16, Math.floor((maxCw - 2 * padX - gutterW) / chW) - 1);
+    const segs = h.lines.map((l) => wrapLine(l.text, cols));
+    const rows = segs.reduce((a, r) => a + r.length, 0);
+    const cand = { fs, lh, chW, noDigits, gutterW, lines: h.lines.length, segs };
+    // prefer a size where nothing wraps; accept wrapping only once the font would get small
+    const wraps = segs.some((r) => r.length > 1);
+    if (rows * lh + 2 * padY <= maxCh) {
+      if (!wraps || fs <= (P ? 34 : 28) * S) { best = cand; break; }
+      best ??= cand; // remember the biggest wrapped fit in case a non-wrapping one never comes
+    }
+  }
+  if (!best) {
+    // still too tall at the smallest size: keep as many whole lines as fit
+    font(g, 400, fsMin, MONO);
+    const chW = g.measureText("0").width, lh = fsMin * 1.55;
+    const gutterW = (noDigits + 1.4) * chW + 20 * S;
+    const cols = Math.max(16, Math.floor((maxCw - 2 * padX - gutterW) / chW) - 1);
+    const segs: Seg[][] = [];
+    let rows = 0;
+    for (const l of h.lines) { const r = wrapLine(l.text, cols); if ((rows + r.length) * lh + 2 * padY > maxCh) break; segs.push(r); rows += r.length; }
+    best = { fs: fsMin, lh, chW, noDigits, gutterW, lines: segs.length, segs };
+  }
+  const maxRowChars = Math.max(24, ...best.segs.flat().map((sg, _i) => sg.e - sg.s + sg.indent));
+  const cw = Math.min(maxCw, Math.max(maxCw * (P ? 1 : 0.62), 2 * padX + best.gutterW + (maxRowChars + 2) * best.chW));
+  const rowsAll = best.segs.reduce((a, r) => a + r.length, 0);
+  const chhFinal = Math.min(maxCh, rowsAll * best.lh + 2 * padY);
+  const cx0 = (W - cw) / 2;
+  const cy0 = top + (maxCh - chhFinal) * (P ? 0.3 : 0.2);
+  // push-in amount that never leaves the safe area (no clipping)
+  const above = cy0 - (top - 18 * S), below = H - 20 * S - (cy0 + chhFinal), side = (W - 24 * S * 2 - cw) / 2;
+  const z = 1 + Math.max(0, Math.min(0.06, (2 * Math.min(above, below)) / chhFinal, (2 * side) / cw));
+  const lay = { ...best, cw, chhFinal, cx0, cy0, z };
+  layouts.set(key, lay);
+  return lay;
+}
+
 function drawCode(p: Plan, g: Ctx, s: Scene, t: number) {
   const h = p.hunks[s.hunk!];
   const { width: W, height: H } = p.opts; const S = p.S;
@@ -444,8 +534,8 @@ function drawCode(p: Plan, g: Ctx, s: Scene, t: number) {
   const inP = ease.out5(prog(u, XFADE * 0.4, 0.75));
   const P = p.portrait;
   // ---- chapter heading ----
-  const mX = (P ? 48 : 120) * S;
-  const headTop = (P ? 200 : 112) * S;
+  const mX = (P ? 44 : 120) * S;
+  const headTop = (P ? 190 : 112) * S;
   const idx = String(s.hunk! + 1).padStart(2, "0");
   const ha = ease.out3(prog(u, XFADE * 0.4, 0.6));
   g.save();
@@ -456,79 +546,54 @@ function drawCode(p: Plan, g: Ctx, s: Scene, t: number) {
   const iw = g.measureText(`${idx}`).width + 18 * S;
   g.fillStyle = C.dim; g.fillText(`/ ${String(p.hunks.length).padStart(2, "0")}`, mX + iw, headTop + 36 * S);
   const { dir, base } = splitPath(h.file.path);
-  font(g, 600, (P ? 50 : 46) * S); g.fillStyle = C.text;
-  const baseFit = ellipsize(g, base, W - 2 * mX);
-  g.fillText(baseFit, mX, headTop + 98 * S);
-  const bw = g.measureText(baseFit).width;
-  font(g, 500, 22 * S, MONO);
+  font(g, 600, (P ? 52 : 46) * S); g.fillStyle = C.text;
+  g.fillText(ellipsize(g, base, W - 2 * mX - (P ? 0 : 220 * S)), mX, headTop + 98 * S);
+  font(g, 500, (P ? 24 : 22) * S, MONO);
   let sub = dir ? dir.replace(/\/$/, "") : "";
   if (h.header) sub = sub ? `${sub}  ›  ${h.header}` : h.header;
   g.fillStyle = C.dim;
-  g.fillText(ellipsize(g, sub, W - 2 * mX - (P ? 0 : 260 * S)), mX, headTop + 136 * S);
-  // file stat on the right of the heading
+  g.fillText(ellipsize(g, sub, W - 2 * mX - (P ? 0 : 220 * S)), mX, headTop + 136 * S);
   font(g, 600, 26 * S, MONO); g.textAlign = "right";
   const rx = W - mX;
   const dTxt = `−${fmt(h.file.deletions)}`;
-  g.fillStyle = C.del; g.fillText(dTxt, rx, headTop + 94 * S);
-  g.fillStyle = C.add; g.fillText(`+${fmt(h.file.additions)}`, rx - g.measureText(dTxt).width - 16 * S, headTop + 94 * S);
+  const statY = P ? headTop + 36 * S : headTop + 94 * S;
+  g.fillStyle = C.del; g.fillText(dTxt, rx, statY);
+  g.fillStyle = C.add; g.fillText(`+${fmt(h.file.additions)}`, rx - g.measureText(dTxt).width - 16 * S, statY);
   g.textAlign = "left";
-  void bw;
   g.restore();
 
-  // ---- card layout fitted to content ----
-  const top = headTop + 166 * S;
-  const bottom = (P ? 170 : 70) * S;
+  // ---- card ----
+  const top = headTop + 168 * S;
+  const bottom = (P ? 150 : 56) * S;
   const maxCw = W - 2 * mX, maxCh = H - top - bottom;
-  const padX = 34 * S, padY = 30 * S;
-  const n = h.lines.length;
-  const maxNo = Math.max(...h.lines.map((l) => l.no ?? 0));
-  const noDigits = Math.max(2, String(maxNo).length);
-  const longest = Math.min(P ? 40 : 96, Math.max(28, ...h.lines.map((l) => l.text.trimEnd().length)));
-  let fs = (maxCw - 2 * padX) / ((longest + noDigits + 3.2) * 0.6);
-  fs = Math.min(fs, (maxCh - 2 * padY) / (n * 1.58), (P ? 33 : 36) * S);
-  fs = Math.max(fs, (P ? 15 : 17) * S);
-  const lh = fs * 1.58;
-  font(g, 400, fs, MONO);
-  const chW = g.measureText("0").width;
-  const gutterW = (noDigits + 1.4) * chW + 20 * S;
-  const cw = Math.min(maxCw, Math.max(maxCw * 0.62, 2 * padX + gutterW + (longest + 2) * chW));
-  let chh = Math.min(maxCh, n * lh + 2 * padY);
-  const cx0 = (W - cw) / 2;
-  const cy0 = top + (maxCh - chh) * (P ? 0.3 : 0.175);
-  const sched = codeSchedule(h, s.dur);
-  const heights = h.lines.map((l, i) => {
-    if (l.kind !== "add") return 1;
-    const a = sched.anim.get(i)!;
-    return ease.out3(prog(u, a.insertAt, 0.2));
+  const padX = (P ? 28 : 34) * S, padY = 28 * S;
+  const L = layoutCode(p, g, h, top, maxCw, maxCh, padX, padY);
+  const { fs, lh, chW, noDigits, gutterW, cw, cx0, cy0 } = L;
+  const lines = h.lines.slice(0, L.lines);
+  const sched = codeSchedule({ ...h, lines }, s.dur);
+  const heights = lines.map((l, i) => {
+    const rows = L.segs[i].length;
+    if (l.kind !== "add") return rows;
+    return rows * ease.out3(prog(u, sched.anim.get(i)!.insertAt, 0.2));
   });
   const totalH = heights.reduce((a, b) => a + b, 0) * lh;
-  // the card grows with its content as lines are inserted
-  chh = Math.min(chh, Math.max(Math.min(n, 3) * lh, totalH) + 2 * padY);
-  const yStart = cy0 + padY;
-  // camera: push in toward the line being typed, then pull back for the spotlight
-  const keys: [number, number][] = [];
-  { let yy = yStart; h.lines.forEach((l, i) => { const hh = heights[i] * lh; const an = sched.anim.get(i);
-      if (l.kind === "add" && an) { keys.push([an.insertAt, yy + lh / 2]); keys.push([an.start + an.dur, yy + lh / 2]); }
-      yy += hh; }); }
-  let focusY = cy0 + chh / 2;
-  if (keys.length) {
-    if (u <= keys[0][0]) focusY = keys[0][1];
-    else if (u >= keys[keys.length - 1][0]) focusY = keys[keys.length - 1][1];
-    else for (let i = 1; i < keys.length; i++) if (u < keys[i][0]) { const [t0, y0] = keys[i - 1], [t1, y1] = keys[i]; focusY = lerp(y0, y1, t1 > t0 ? (u - t0) / (t1 - t0) : 1); break; }
-  }
-  const zoomIn = keys.length ? ease.inOut3(prog(u, keys[0][0] - 0.35, 0.8)) * (1 - ease.inOut3(prog(u, sched.spotAt - 0.1, 0.7))) : 0;
-  const zoom = 1 + 0.1 * zoomIn;
-  let camY = lerp(cy0 + chh / 2, focusY, zoomIn * 0.55);
-  { // never reveal empty space beyond the content edges
-    const lo = yStart + (chh / 2 - padY) / zoom, hi = yStart + totalH - (chh / 2 - padY) / zoom;
-    camY = lo <= hi ? Math.min(hi, Math.max(lo, camY)) : cy0 + chh / 2;
-  }
-  const scale = lerp(0.965, 1, inP) * (1 - 0.02 * outP);
+  const chh = Math.min(L.chhFinal, Math.max(Math.min(lines.length, 3) * lh, totalH) + 2 * padY);
+  // camera: a gentle push-in while typing, back out for the spotlight; sized so the card never clips
+  const zoomIn = ease.inOut3(prog(u, 0.3, 1.6)) * (1 - ease.inOut3(prog(u, sched.spotAt - 0.1, 0.8)));
+  const scale = lerp(0.965, 1, inP) * (1 + (L.z - 1) * zoomIn) * (1 - 0.02 * outP);
   g.save();
   g.globalAlpha = A;
-  g.translate(W / 2, cy0 + chh / 2 + (1 - inP) * 44 * S - outP * 30 * S);
+  const pivotY = cy0 + L.chhFinal / 2;
+  // code cards move like a carousel: in from the right, out to the left
+  g.translate(W / 2 + (1 - inP) * 90 * S - outP * 90 * S, pivotY + (1 - inP) * 16 * S);
   g.scale(scale, scale);
-  g.translate(-W / 2, -(cy0 + chh / 2));
+  g.translate(-W / 2, -pivotY);
+  { // soft colored light behind the card, tinted by the change (green adds, red deletes)
+    const tint = h.adds >= h.dels ? C.add : C.del;
+    const gl = g.createRadialGradient(W / 2, cy0 + chh * 0.6, 0, W / 2, cy0 + chh * 0.6, Math.max(cw, chh) * 0.75);
+    gl.addColorStop(0, hexA(tint, 0.09)); gl.addColorStop(0.5, hexA(C.accent, 0.04)); gl.addColorStop(1, hexA(C.accent, 0));
+    g.fillStyle = gl; g.fillRect(cx0 - cw * 0.3, cy0 - chh * 0.4, cw * 1.6, chh * 1.8);
+  }
   g.save();
   g.shadowColor = "rgba(0,0,0,0.65)"; g.shadowBlur = 70 * S; g.shadowOffsetY = 28 * S;
   rrect(g, cx0, cy0, cw, chh, 22 * S); g.fillStyle = C.panel; g.fill();
@@ -537,27 +602,23 @@ function drawCode(p: Plan, g: Ctx, s: Scene, t: number) {
   cg.addColorStop(0, "rgba(255,255,255,0.03)"); cg.addColorStop(1, "rgba(255,255,255,0)");
   rrect(g, cx0, cy0, cw, chh, 22 * S); g.fillStyle = cg; g.fill();
   g.strokeStyle = C.border; g.lineWidth = 1.5 * S; g.stroke();
-  // language dot on the card corner
   const lc = LANG_COLOR[h.lang] ?? LANG_COLOR.text;
   g.fillStyle = lc; g.globalAlpha = A * 0.9;
-  g.beginPath(); g.arc(cx0 + cw - 26 * S, cy0 + 26 * S, 6 * S, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.arc(cx0 + cw - 22 * S, cy0 + 22 * S, 5 * S, 0, Math.PI * 2); g.fill();
   g.globalAlpha = A;
 
   const codeX = cx0 + padX + gutterW;
-  const codeMaxW = cx0 + cw - padX - codeX;
   const spot = ease.inOut3(prog(u, sched.spotAt, 0.5));
-  let y = yStart;
+  let y = cy0 + padY;
   g.save();
   rrect(g, cx0, cy0, cw, chh, 22 * S); g.clip();
-  // inner camera: zoom the code (anchored at the card's left edge) toward the typing line
-  g.translate(cx0, cy0 + chh / 2); g.scale(zoom, zoom); g.translate(-cx0, -camY);
   let cursor: { x: number; y: number } | null = null;
-  h.lines.forEach((l, i) => {
+  lines.forEach((l, i) => {
     const hh = heights[i] * lh;
     if (hh < 0.5) return;
-    const cy = y + hh / 2;
     const an = sched.anim.get(i);
-    const rowAlpha = heights[i];
+    const segs = L.segs[i];
+    const rowAlpha = l.kind === "add" ? heights[i] / segs.length : 1;
     if (l.kind === "add" && an) {
       const sweep = ease.out3(prog(u, an.insertAt, an.dur + 0.25));
       const grd = g.createLinearGradient(cx0, 0, cx0 + cw, 0);
@@ -574,34 +635,49 @@ function drawCode(p: Plan, g: Ctx, s: Scene, t: number) {
       g.fillStyle = C.del; g.fillRect(cx0, y, 4 * S, hh);
     }
     const dimK = l.kind === "ctx" ? 1 - 0.55 * spot : l.kind === "del" ? 1 - 0.3 * spot : 1;
+    // gutter on the first row only
+    const cy1 = y + lh / 2;
     font(g, 400, fs * 0.86, MONO); g.textBaseline = "middle"; g.textAlign = "right";
     g.globalAlpha = A * rowAlpha * dimK * (l.kind === "ctx" ? 0.8 : 1);
     g.fillStyle = l.kind === "add" ? hexA(C.add, 0.85) : l.kind === "del" ? hexA(C.del, 0.85) : C.dim;
-    g.fillText(l.no != null ? String(l.no) : "", cx0 + padX + noDigits * chW * 0.86, cy);
+    g.fillText(l.no != null ? String(l.no) : "", cx0 + padX + noDigits * chW * 0.86, cy1);
     g.textAlign = "left";
     const mark = l.kind === "add" ? "+" : l.kind === "del" ? "−" : "";
-    if (mark) g.fillText(mark, cx0 + padX + (noDigits + 0.7) * chW, cy);
+    if (mark) g.fillText(mark, cx0 + padX + (noDigits + 0.7) * chW, cy1);
     font(g, 400, fs, MONO);
     let shown = l.text.length;
     if (l.kind === "add" && an) shown = Math.floor(l.text.length * clamp01((u - an.start) / an.dur));
-    let x = codeX; let left = shown;
     const delP = l.kind === "del" && an ? ease.out3(prog(u, an.start, an.dur)) : 0;
-    for (const tk of l.toks) {
-      if (left <= 0) break;
-      const txt = tk.text.slice(0, left); left -= txt.length;
-      g.fillStyle = l.kind === "del" ? mixColor(tk.color, C.del, 0.55 * delP) : tk.color;
-      g.globalAlpha = A * rowAlpha * dimK * (l.kind === "del" ? 1 - 0.35 * delP : 1);
-      g.fillText(txt, x, cy);
-      x += g.measureText(txt).width;
-      if (x > codeX + codeMaxW) break;
-    }
-    if (l.kind === "del" && delP > 0 && l.text.trim()) {
-      const lead = (l.text.length - l.text.trimStart().length) * chW;
-      const end = Math.min(codeX + l.text.trimEnd().length * chW, codeX + codeMaxW);
-      g.globalAlpha = A * 0.75 * dimK;
-      g.fillStyle = C.del; g.fillRect(codeX + lead, cy, (end - codeX - lead) * delP, 1.6 * S);
-    }
-    if (l.kind === "add" && an && u >= an.insertAt && u < an.start + an.dur + 0.15) cursor = { x: Math.min(x, codeX + codeMaxW), y: cy };
+    const textA = A * rowAlpha * dimK * (l.kind === "del" ? 1 - 0.35 * delP : 1);
+    segs.forEach((sg, r) => {
+      const ry = y + r * lh + lh / 2;
+      if (ry - lh / 2 > y + hh) return;
+      const x0 = codeX + sg.indent * chW;
+      if (r > 0 && shown > sg.s) { // continuation marker
+        g.globalAlpha = textA * 0.5; g.fillStyle = C.dim;
+        g.fillText("↪", codeX + Math.max(0, sg.indent - 2) * chW, ry);
+      }
+      let x = x0, pos = 0;
+      const end = Math.min(sg.e, shown);
+      for (const tk of l.toks) {
+        const a = pos, b = pos + tk.text.length; pos = b;
+        if (b <= sg.s) continue;
+        if (a >= end) break;
+        const txt = tk.text.slice(Math.max(0, sg.s - a), Math.min(tk.text.length, end - a));
+        if (!txt) continue;
+        g.fillStyle = l.kind === "del" ? mixColor(tk.color, C.del, 0.55 * delP) : tk.color;
+        g.globalAlpha = textA;
+        g.fillText(txt, x, ry);
+        x += g.measureText(txt).width;
+      }
+      if (l.kind === "del" && delP > 0 && l.text.slice(sg.s, sg.e).trim()) {
+        const lead = r === 0 ? (l.text.length - l.text.trimStart().length) * chW : 0;
+        const segLen = l.text.slice(sg.s, sg.e).trimEnd().length * chW;
+        g.globalAlpha = A * 0.75 * dimK;
+        g.fillStyle = C.del; g.fillRect(x0 + lead, ry, (segLen - lead) * delP, 1.6 * S);
+      }
+      if (l.kind === "add" && an && u >= an.insertAt && u < an.start + an.dur + 0.15 && shown >= sg.s && (shown < sg.e || r === segs.length - 1)) cursor = { x, y: ry };
+    });
     y += hh;
   });
   if (cursor) {
@@ -610,19 +686,6 @@ function drawCode(p: Plan, g: Ctx, s: Scene, t: number) {
     g.shadowColor = C.accent; g.shadowBlur = 18 * S;
     g.fillRect(c.x + 2 * S, c.y - fs * 0.62, Math.max(2, 3 * S), fs * 1.24);
     g.shadowBlur = 0;
-  }
-  g.restore();
-  g.save();
-  rrect(g, cx0, cy0, cw, chh, 22 * S); g.clip();
-  const fx = cx0 + cw - padX - 50 * S;
-  const fade = g.createLinearGradient(fx, 0, cx0 + cw, 0);
-  fade.addColorStop(0, hexA(C.panel, 0)); fade.addColorStop(0.75, hexA(C.panel, 1));
-  g.globalAlpha = A; g.fillStyle = fade; g.fillRect(fx, cy0, cx0 + cw - fx, chh);
-  // soft top/bottom fades so zoomed lines melt into the card edge
-  for (const [y0, y1] of [[cy0, cy0 + padY], [cy0 + chh, cy0 + chh - padY]]) {
-    const vf = g.createLinearGradient(0, y0, 0, y1);
-    vf.addColorStop(0, hexA(C.panel, zoomIn)); vf.addColorStop(1, hexA(C.panel, 0));
-    g.fillStyle = vf; g.fillRect(cx0, Math.min(y0, y1), cw, padY);
   }
   g.restore();
   g.restore();
