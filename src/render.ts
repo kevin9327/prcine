@@ -595,9 +595,10 @@ function drawCode(p: Plan, g: Ctx, s: Scene, t: number) {
   g.translate(-W / 2, -pivotY);
   { // soft colored light behind the card, tinted by the change (green adds, red deletes)
     const tint = h.adds >= h.dels ? C.add : C.del;
-    const gl = g.createRadialGradient(W / 2, cy0 + chh * 0.6, 0, W / 2, cy0 + chh * 0.6, Math.max(cw, chh) * 0.75);
+    const gy = cy0 + L.chhFinal * 0.6, gr = Math.max(cw, L.chhFinal) * 0.75;
+    const gl = g.createRadialGradient(W / 2, gy, 0, W / 2, gy, gr);
     gl.addColorStop(0, hexA(tint, 0.09)); gl.addColorStop(0.5, hexA(C.accent, 0.04)); gl.addColorStop(1, hexA(C.accent, 0));
-    g.fillStyle = gl; g.fillRect(cx0 - cw * 0.3, cy0 - chh * 0.4, cw * 1.6, chh * 1.8);
+    g.fillStyle = gl; g.fillRect(W / 2 - gr, gy - gr, gr * 2, gr * 2); // covers the whole gradient, so no hard edge
   }
   g.save();
   g.shadowColor = "rgba(0,0,0,0.65)"; g.shadowBlur = 70 * S; g.shadowOffsetY = 28 * S;
