@@ -46,7 +46,7 @@ export const LANG_COLOR: Record<string, string> = {
   json: "#CBCB41", yaml: "#CB171E", toml: "#9C4221", markdown: "#6B8AFF", sql: "#E38C00", text: "#8A8F9A",
 };
 
-/** "1 file", "3 files". */
+/** Pluralize a count: "1 file", "3 files". */
 export function plural(n: number, word: string) {
   return `${fmt(n)} ${word}${n === 1 ? "" : "s"}`;
 }
