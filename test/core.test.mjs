@@ -165,3 +165,13 @@ test("pickHighlights prefers core source over tests and help strings", async () 
   const picked = pickHighlights(cs, 3, 13);
   assert.ok(!picked.some((h) => h.file === test), "test file should not be filler");
 });
+
+test("pickHighlights shows the fix, then its test, when all code lives in scripts/", async () => {
+  const mk = (path, lines, kind = "add") => ({ path, status: "modified", additions: lines.length, deletions: 0, binary: false,
+    hunks: [{ oldStart: 1, newStart: 1, header: "", lines: lines.map((text, i) => ({ kind, text, newNo: i + 1, oldNo: i + 1 })) }] });
+  const fix = mk("scripts/build.py", ['    pattern = r"^```[ \\t]*mermaid\\n(.*?)```"']);
+  const test = mk("scripts/tests/test_build.py", Array.from({ length: 14 }, (_, i) => `    assert extract(doc_${i}) == [${i}]`));
+  const cs = { repo: "x/y", title: "t", commits: 1, additions: 15, deletions: 0, files: [fix, test] };
+  const picked = pickHighlights(cs, 2, 13);
+  assert.deepEqual(picked.map((h) => h.file.path), ["scripts/build.py", "scripts/tests/test_build.py"]);
+});

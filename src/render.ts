@@ -58,11 +58,13 @@ export async function plan(cs: ChangeSet, opts: RenderOptions): Promise<Plan> {
   registerFonts();
   const portrait = opts.height >= opts.width; // square uses the stacked (vertical) layout
   const S = Math.min(opts.width, opts.height) / 1080;
-  const maxLines = opts.height > opts.width * 1.3 ? 20 : 13;
+  const maxLines = opts.height > opts.width * 1.3 ? (opts.duration <= 18 ? 15 : 20) : (opts.duration <= 18 ? 11 : 13);
   const D = opts.duration;
-  // how many hunks fit: title 3.1 + files 3.0 + outro 3.2, ~4.2s per hunk
-  const fixed = 3.1 + 3.0 + 3.2;
-  let k = Math.max(1, Math.floor((D - fixed + XFADE * 3) / 4.2));
+  // trailer pacing: title, files and outro stay short so a 15s cut still shows two real hunks
+  const short = D <= 18;
+  let tTitle = short ? 2.6 : 3.1, tFiles = short ? 2.3 : 3.0, tOutro = short ? 2.8 : 3.2;
+  const fixed = tTitle + tFiles + tOutro;
+  let k = Math.max(1, Math.min(3, Math.floor((D - fixed + XFADE * 3) / (short ? 3.4 : 4.2))));
   if (opts.maxHunks) k = Math.min(k, opts.maxHunks);
   const hs = pickHighlights(cs, k, maxLines);
   const hunks: PHunk[] = [];
@@ -82,9 +84,9 @@ export async function plan(cs: ChangeSet, opts: RenderOptions): Promise<Plan> {
   const n = hunks.length;
   const transitions = n + 2; // between n+3 scenes
   let codeDur = n ? (D - fixed + transitions * XFADE) / n : 0;
-  let tTitle = 3.1, tFiles = 3.0, tOutro = 3.2;
-  if (n && codeDur < 3.4) { // compress fixed scenes for very short videos
-    const need = (3.4 - codeDur) * n;
+  const minCode = short ? 3.1 : 3.4;
+  if (n && codeDur < minCode) { // compress fixed scenes for very short videos
+    const need = (minCode - codeDur) * n;
     const f = Math.max(0.55, 1 - need / fixed);
     tTitle *= f; tFiles *= f; tOutro *= f;
     codeDur = (D - (tTitle + tFiles + tOutro) + transitions * XFADE) / n;
@@ -98,7 +100,7 @@ export async function plan(cs: ChangeSet, opts: RenderOptions): Promise<Plan> {
   // a hunk only gets as long as its change needs: tiny edits don't sit on screen for 6 seconds
   hunks.forEach((h, i) => {
     const changedLines = h.adds + h.dels;
-    const ideal = Math.max(3.4, Math.min(6.5, 2.6 + 0.2 * changedLines + h.chars / 90));
+    const ideal = Math.max(minCode, Math.min(6.5, 2.6 + 0.2 * changedLines + h.chars / 90));
     push({ kind: "code", dur: Math.min(codeDur, ideal), hunk: i });
   });
   // the outro absorbs rounding; when there is little worth showing, the video gets shorter instead of padding
@@ -354,7 +356,7 @@ function drawFiles(p: Plan, g: Ctx, s: Scene, t: number) {
   g.save(); g.globalAlpha = A;
   g.translate(0, (1 - ease.out3(prog(u, XFADE * 0.4, 0.6))) * 30 * S - outP * 30 * S);
   const M = (p.portrait ? 64 : 140) * S;
-  const top = (p.portrait ? 240 : 150) * S;
+  let top = (p.portrait ? 240 : 150) * S;
   const chosen = new Set(p.hunks.map((h) => h.file));
   const maxRows = p.portrait ? 16 : 9;
   const rank = (f: FileDiff) => (chosen.has(f) ? 1e9 : 0) + (f.additions + f.deletions) * Math.max(0.01, fileWeight(f));
@@ -362,17 +364,20 @@ function drawFiles(p: Plan, g: Ctx, s: Scene, t: number) {
   const rows = files.slice(0, files.length > maxRows ? maxRows - 1 : maxRows)
     .sort((a, b) => cs.files.indexOf(a) - cs.files.indexOf(b));
   const more = files.length - rows.length;
+  const baseRow = (p.portrait ? 74 : 64) * S;
+  const avail = H - (top + 110 * S) - (p.portrait ? 200 : 90) * S;
+  const nRows = rows.length + (more > 0 ? 1 : 0);
+  const kRow = Math.max(1, Math.min(p.portrait ? 1.3 : 1.45, avail / (nRows * baseRow)));
+  const rowH = baseRow * kRow;
+  const k = Math.min(kRow, p.portrait ? 1.08 : 1.2); // type grows less than the row pitch
+  if (p.portrait) top = Math.max(top, (H - (110 * S + nRows * rowH)) / 2 - 40 * S); // centre the list in tall frames
   // heading
   font(g, 600, 54 * S); g.textBaseline = "alphabetic"; g.fillStyle = C.text;
   g.fillText(`${fmt(cs.files.length)} file${cs.files.length === 1 ? "" : "s"} changed`, M, top + 54 * S);
   font(g, 500, 24 * S, MONO); g.fillStyle = C.dim;
   const hint = p.hunks.length ? `${p.hunks.length} highlight${p.hunks.length === 1 ? "" : "s"} ahead` : "";
   if (!p.portrait) { g.textAlign = "right"; g.fillText(hint, W - M, top + 50 * S); g.textAlign = "left"; }
-  const baseRow = (p.portrait ? 74 : 64) * S;
-  const avail = H - (top + 110 * S) - (p.portrait ? 200 : 90) * S;
-  const k = Math.max(1, Math.min(1.45, avail / ((rows.length + (more > 0 ? 1 : 0)) * baseRow)));
-  const rowH = baseRow * k;
-  let y = top + 110 * S;
+  let y = top + 110 * S + (rowH - baseRow) / 2 + (p.portrait ? 14 * S : 0);
   const maxCh = Math.max(1, ...rows.map((f) => f.additions + f.deletions));
   const spot = ease.inOut3(prog(u, s.dur - XFADE - 0.9, 0.5));
   rows.forEach((f, i) => {
@@ -392,8 +397,8 @@ function drawFiles(p: Plan, g: Ctx, s: Scene, t: number) {
     rrect(g, M, ry - gs / 2, gs, gs, 7 * S); g.fillStyle = hexA(st[1], 0.16); g.fill();
     font(g, 700, 17 * S * k, MONO); g.fillStyle = st[1]; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(st[0], M + gs / 2, ry + 1);
     g.textAlign = "left";
-    const barW = (p.portrait ? 150 : 240) * S;
-    const numW = (p.portrait ? 170 : 210) * S;
+    const barW = (p.portrait ? 96 : 240) * S;
+    const numW = (p.portrait ? 150 : 210) * S;
     font(g, 500, (p.portrait ? 27 : 28) * S * k, MONO);
     drawPath(g, f.path, M + gs + 20 * S * k, ry + 1, W - 2 * M - gs - 20 * S - barW - numW - 30 * S, C.dim, isC ? C.text : C.sub);
     // numbers
@@ -488,7 +493,7 @@ function layoutCode(p: Plan, g: Ctx, h: PHunk, top: number, maxCw: number, maxCh
   const { width: W, height: H } = p.opts; const S = p.S; const P = p.portrait;
   const maxNo = Math.max(...h.lines.map((l) => l.no ?? 0));
   const noDigits = Math.max(2, String(maxNo).length);
-  const fsMax = (P ? 40 : 38) * S, fsMin = (P ? 27 : 21) * S;
+  const fsMax = (P ? 42 : 44) * S, fsMin = (P ? 27 : 21) * S;
   let best: Omit<CodeLayout, "cw" | "chhFinal" | "cx0" | "cy0" | "z"> | null = null;
   for (let fs = fsMax; fs >= fsMin - 0.01; fs -= 1 * S) {
     font(g, 400, fs, MONO);
@@ -522,7 +527,7 @@ function layoutCode(p: Plan, g: Ctx, h: PHunk, top: number, maxCw: number, maxCh
   const rowsAll = best.segs.reduce((a, r) => a + r.length, 0);
   const chhFinal = Math.min(maxCh, rowsAll * best.lh + 2 * padY);
   const cx0 = (W - cw) / 2;
-  const cy0 = top + (maxCh - chhFinal) * (P ? 0.3 : 0.2);
+  const cy0 = top + (maxCh - chhFinal) * (P ? 0.36 : 0.4); // short hunks sit near the optical centre, not stuck under the heading
   // push-in amount that never leaves the safe area (no clipping)
   const above = cy0 - (top - 18 * S), below = H - 20 * S - (cy0 + chhFinal), side = (W - 24 * S * 2 - cw) / 2;
   const z = 1 + Math.max(0, Math.min(0.06, (2 * Math.min(above, below)) / chhFinal, (2 * side) / cw));
@@ -758,8 +763,8 @@ function drawOutro(p: Plan, g: Ctx, s: Scene, t: number) {
   const gx = cx - (cols * cellW) / 2;
   const gy = by + (p.portrait ? 260 : 230) * S + extra;
   stats.forEach(([label, val, c], i) => {
-    const e = ease.out5(prog(u, 0.45 + i * 0.09, 0.8));
-    const ce = ease.out3(prog(u, 0.45 + i * 0.09, 1.4));
+    const e = ease.out5(prog(u, 0.3 + i * 0.07, 0.7));
+    const ce = ease.out3(prog(u, 0.3 + i * 0.07, 0.9));
     const x = gx + (i % cols) * cellW + cellW / 2;
     const y = gy + Math.floor(i / cols) * cellH + (1 - e) * 30 * S;
     g.globalAlpha = inA * (1 - endFade) * e;

@@ -10,7 +10,7 @@ inputs:
     default: ${{ github.token }}
   duration:
     description: Video length in seconds (10-60).
-    default: "22"
+    default: "15"
   aspect:
     description: 16:9, 9:16 or 1:1.
     default: "16:9"

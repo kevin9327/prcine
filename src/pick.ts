@@ -20,12 +20,17 @@ const CORE = /(^|\/)(src|lib|core|internal|pkg|app|crates\/[^/]+\/src|packages\/
 
 export function isTestPath(path: string) { return TEST.test(path); }
 
-export function fileWeight(f: FileDiff): number {
+/** True when every non-test code file sits in an aux folder (e.g. a repo whose code lives in scripts/): then aux is the core. */
+export function auxIsCore(cs: ChangeSet): boolean {
+  return !cs.files.some((f) => !f.binary && !NOISE.some((r) => r.test(f.path)) && !TEST.test(f.path) && !AUX.test(f.path) && !/\.(md|mdx|txt|rst|json|ya?ml|toml|ini|cfg|xml|csv|lock)$/i.test(f.path));
+}
+
+export function fileWeight(f: FileDiff, relaxAux = false): number {
   if (f.binary || f.hunks.length === 0) return 0;
   if (NOISE.some((r) => r.test(f.path))) return 0.05;
   let w = 1;
   if (TEST.test(f.path)) w *= 0.25;
-  else if (AUX.test(f.path)) w *= 0.45;
+  else if (AUX.test(f.path)) w *= relaxAux ? 1 : 0.45;
   else if (CORE.test(f.path)) w *= 1.2;
   if (/\.(md|mdx|txt|rst)$/i.test(f.path)) w *= 0.35;
   if (/\.(json|ya?ml|toml|ini|cfg|xml|csv|lock)$/i.test(f.path)) w *= 0.45;
@@ -94,9 +99,11 @@ function trim(lines: DiffLine[], start: number, end: number) {
  * close to the best one, so a small PR gets fewer, better highlights instead of filler.
  */
 export function pickHighlights(cs: ChangeSet, count: number, maxLines: number): Highlight[] {
+  const relax = auxIsCore(cs);
+  const weight = (f: FileDiff) => fileWeight(f, relax);
   const cands: Highlight[] = [];
   for (const f of cs.files) {
-    const w = fileWeight(f);
+    const w = weight(f);
     if (w <= 0) continue;
     const perFile: Highlight[] = [];
     for (const h of f.hunks) {
@@ -116,15 +123,27 @@ export function pickHighlights(cs: ChangeSet, count: number, maxLines: number): 
   for (const c of cands) {
     if (chosen.length >= count) break;
     const nth = perFileCount.get(c.file) ?? 0;
-    const weak = fileWeight(c.file) < 0.9; // tests, docs, examples, config
+    const weak = weight(c.file) < 0.9; // tests, docs, examples, config
     const bar = nth ? 0.5 : weak ? 0.6 : 0.25;
     if (chosen.length && c.score < top * bar) continue;
     chosen.push(c);
     perFileCount.set(c.file, nth + 1);
   }
+  // the fix itself must be on screen: if only tests/docs won, swap the best source hunk in
+  const isSource = (h: Highlight) => !TEST.test(h.file.path) && weight(h.file) >= 0.9;
+  if (!chosen.some(isSource)) {
+    const src = cands.find(isSource);
+    if (src) { if (chosen.length >= count) chosen.pop(); chosen.unshift(src); }
+  }
+  // a single fix still gets "fix, then proof": fill one free slot from another file (usually its test)
+  for (const c of cands) {
+    if (chosen.length !== 1 || chosen.length >= count) break;
+    if (chosen.includes(c) || chosen.some((x) => x.file === c.file)) continue;
+    if (c.score >= top * 0.2) chosen.push(c);
+  }
   // source first, then tests/docs/config; within each group keep the PR's file and hunk order
   const order = new Map(cs.files.map((f, i) => [f, i]));
-  const tier = (h: Highlight) => (fileWeight(h.file) >= 1 ? 0 : 1);
+  const tier = (h: Highlight) => (weight(h.file) >= 1 ? 0 : 1);
   const hunkPos = (h: Highlight) => h.file.hunks.findIndex((x) => x.lines.includes(h.lines[0]));
   return chosen.sort((a, b) => tier(a) - tier(b) || order.get(a.file)! - order.get(b.file)! || hunkPos(a) - hunkPos(b));
 }

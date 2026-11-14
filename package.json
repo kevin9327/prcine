@@ -1,23 +1,27 @@
 {
   "name": "prcine",
   "version": "0.1.0",
-  "description": "Turn any GitHub PR or git range into a polished code-walkthrough video (MP4 + animated WebP) for your README, X post or PR comment.",
+  "description": "Turn any GitHub PR or git range into a 15-second trailer video (MP4 + looping WebP), 16:9 or 9:16. One command, no API key.",
   "scripts": {
     "build": "tsc",
     "prepare": "tsc",
     "test": "npm run build && node --test test/core.test.mjs"
   },
   "keywords": [
+    "changelog",
+    "cli",
+    "code",
+    "demo",
+    "diff",
     "git",
     "github",
     "pull-request",
-    "diff",
-    "video",
-    "code",
     "readme",
-    "demo",
-    "cli",
-    "changelog"
+    "social",
+    "trailer",
+    "twitter",
+    "video",
+    "x"
   ],
   "author": "kevin9327",
   "license": "MIT",
@@ -35,7 +39,7 @@
   },
   "files": [
     "dist",
-    "assets",
+    "assets/fonts",
     "skills",
     "README.md",
     "LICENSE"

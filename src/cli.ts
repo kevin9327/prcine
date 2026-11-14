@@ -14,13 +14,14 @@ Usage
 
 Examples
   npx prcine https://github.com/vercel/next.js/pull/12345
-  npx prcine main...HEAD --aspect 9:16
-  npx prcine HEAD~3..HEAD -o demo --duration 15
+  npx prcine main...HEAD --vertical
+  npx prcine HEAD~3..HEAD -o demo --duration 25
 
 Options
   -o, --out <path>        Output path without extension (default: prcine)
-  -d, --duration <sec>    Video length, 10-60 (default: 22)
+  -d, --duration <sec>    Video length, 10-60 (default: 15)
   -a, --aspect <ratio>    16:9 | 9:16 | 1:1 (default: 16:9)
+      --vertical          Same as --aspect 9:16 (X, Shorts, Reels)
       --size <px>         Short side in pixels (default: 1080)
       --fps <n>           Frames per second (default: 30)
       --title <text>      Override the title
@@ -42,10 +43,11 @@ async function main() {
     allowPositionals: true,
     options: {
       out: { type: "string", short: "o", default: "prcine" },
-      duration: { type: "string", short: "d", default: "22" },
+      duration: { type: "string", short: "d", default: "15" },
       aspect: { type: "string", short: "a", default: "16:9" },
       size: { type: "string", default: "1080" },
       fps: { type: "string", default: "30" },
+      vertical: { type: "boolean", default: false },
       title: { type: "string" },
       hunks: { type: "string" },
       "no-webp": { type: "boolean", default: false },
@@ -64,7 +66,7 @@ async function main() {
   const input = positionals[0];
   const duration = Math.min(60, Math.max(10, Number(values.duration)));
   const short = Number(values.size);
-  const [aw, ah] = String(values.aspect).split(":").map(Number);
+  const [aw, ah] = String(values.vertical ? "9:16" : values.aspect).split(":").map(Number);
   if (!aw || !ah) throw new Error(`bad --aspect ${values.aspect}`);
   let width: number, height: number;
   if (aw >= ah) { height = short; width = Math.round((short * aw) / ah); } else { width = short; height = Math.round((short * ah) / aw); }
